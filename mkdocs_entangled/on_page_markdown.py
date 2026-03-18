@@ -9,7 +9,7 @@ from mkdocs.structure.pages import Page
 from mkdocs.structure.files import Files
 
 from entangled.model import ReferenceMap, Content, PlainText, ReferenceId, CodeBlock, content_to_text
-from entangled.model.properties import get_attribute, Id, Attribute, Class
+from entangled.model.properties import get_attribute, get_id, get_classes, Id, Attribute, Class
 from entangled.config import ConfigUpdate, read_config
 from entangled.interface import Context, read_markdown
 from repl_session import read_session
@@ -61,30 +61,27 @@ def add_title(reference_map: ReferenceMap, r: ReferenceId) -> list[Content]:
     """
     codeblock: CodeBlock = reference_map[r]
 
-    ids = [p.value for p in codeblock.properties if isinstance(p, Id)]
-    classes = [p.value for p in codeblock.properties if isinstance(p, Class)]
-    filenames = [p.value for p in codeblock.properties if isinstance(p, Attribute) and p.key == "file"]
+    block_id = get_id(codeblock.properties)
+    classes = list(get_classes(codeblock.properties))
+    filename = get_attribute(codeblock.properties, "file")
 
     title = None
-    if len(ids) == 1 and len(filenames) == 1:
-        title = f"#{ids[0]} / file: {filenames[0]}"
-    elif len(ids) == 1:
-        title = f"#{ids[0]}"
-    elif len(filenames) == 1:
-        title = f"file: {filenames[0]}"
-    elif len(ids) > 1 or len(filenames) > 1:
-        title = "error: ambiguous code block title"
+    if block_id and filename:
+        title = f"#{block_id} / file: {filename}"
+    elif block_id:
+        title = f"#{block_id}"
+    elif filename:
+        title = f"file: {filename}"
 
     open_line = "```"
     if classes:
-        language_id = classes[0]
-        open_line += language_id
+        open_line += classes[0]
 
-    if ids or classes or title:
+    if block_id or classes or title:
         open_line += " {"
 
-        if ids:
-            open_line += str(Id(ids[0]))
+        if block_id:
+            open_line += str(Id(block_id))
 
         for c in classes[1:]:
             open_line += " " + str(Class(c))
@@ -95,6 +92,11 @@ def add_title(reference_map: ReferenceMap, r: ReferenceId) -> list[Content]:
         open_line += "}\n"
 
     codeblock.open_line = open_line
+
+    # Insert an anchor target before code blocks with an id, so that
+    # <<refname>> links can jump to them.
+    if block_id:
+        return [PlainText(f'\n<a id="{block_id}"></a>\n'), r]
     return [r]
 
 
@@ -131,8 +133,7 @@ def include_repl_output(reference_map: ReferenceMap, r: ReferenceId) -> list[Con
     return [r, PlainText(output)]
 
 
-def on_page_markdown(markdown: str, *, page: Page, config: MkDocsConfig, files: Files) -> str:
-    context = Context() | read_config()
+def on_page_markdown(context: Context, markdown: str, *, page: Page, config: MkDocsConfig, files: Files) -> tuple[str, ReferenceMap]:
     reference_map, content = read_single_markdown(context, markdown)
     filtered_content = iter_bind(content, partial(compose_filters(add_title, include_repl_output), reference_map))
-    return document_to_text(reference_map, filtered_content)
+    return document_to_text(reference_map, filtered_content), reference_map
