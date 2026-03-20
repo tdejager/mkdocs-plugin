@@ -1,5 +1,6 @@
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from mkdocs.config.defaults import MkDocsConfig
@@ -7,10 +8,11 @@ from mkdocs.structure.pages import Page
 from mkdocs.structure.files import Files, File
 
 from entangled.model import ReferenceMap
-from entangled.model.properties import get_id
+from entangled.model.properties import get_id, get_attribute
+from entangled.model.reference_name import ReferenceName
 from entangled.interface import Context
 
-from .on_page_markdown import read_single_markdown
+from .on_page_markdown import read_single_markdown, file_slug
 
 log = logging.getLogger("mkdocs.plugins.entangled")
 
@@ -32,6 +34,17 @@ NOWEB_PATTERN = re.compile(
 
 STRIP_TAGS = re.compile(r'<[^>]+>')
 
+# Regex to match <<refname>> in raw source code (matches tangle.py's character class)
+NOWEB_SOURCE_PATTERN = re.compile(r"<<([\w:-]+)>>")
+
+
+@dataclass
+class UsedByEntry:
+    """A back-reference entry: which block uses a given named block."""
+    label: str
+    block_id: str | None
+    file: File
+
 
 def _collect_ids(reference_map: ReferenceMap) -> set[str]:
     """Extract all Id values from code blocks in a reference map."""
@@ -42,12 +55,13 @@ def _collect_ids(reference_map: ReferenceMap) -> set[str]:
     return ids
 
 
-def build_global_refs(
+def build_global_refs_and_used_by(
     context: Context, files: Files, config: MkDocsConfig,
-) -> tuple[dict[str, File], dict[str, int]]:
-    """Pre-scan all markdown files to build a global refname -> File map and ref counts."""
+) -> tuple[dict[str, File], dict[str, int], dict[str, list[UsedByEntry]]]:
+    """Pre-scan all markdown files to build global refs, ref counts, and reverse usage map."""
     global_refs: dict[str, File] = {}
     global_ref_counts: dict[str, int] = {}
+    global_used_by: dict[str, list[UsedByEntry]] = {}
     docs_dir = Path(config['docs_dir'])
 
     for file in files.documentation_pages():
@@ -64,14 +78,55 @@ def build_global_refs(
 
         for ref_id, code_block in refs.items():
             block_id = get_id(code_block.properties)
+            filename = get_attribute(code_block.properties, "file")
+
+            # Build global_refs and ref counts (keyed by block_id string)
             if block_id:
                 global_refs[block_id] = file
-                # Track the total number of blocks per name (ref_count is 0-indexed)
                 global_ref_counts[block_id] = max(
                     global_ref_counts.get(block_id, 0), ref_id.ref_count + 1
                 )
 
-    return global_refs, global_ref_counts
+            # Determine label and anchor for this referencing block
+            if filename and block_id:
+                label = f"file: {filename}"
+                anchor = block_id
+            elif filename:
+                label = f"file: {filename}"
+                anchor = file_slug(filename)
+            elif block_id:
+                label = f"#{block_id}"
+                anchor = block_id
+            else:
+                continue  # No meaningful label
+
+            # Scan source for <<refname>> references to build reverse map
+            seen_refs: set[str] = set()
+            for m in NOWEB_SOURCE_PATTERN.finditer(code_block.source):
+                ref_str = m.group(1)
+                ref_name = ReferenceName.from_str(ref_str, code_block.namespace)
+                ref_key = str(ref_name)
+
+                if ref_key in seen_refs:
+                    continue
+                seen_refs.add(ref_key)
+
+                entry = UsedByEntry(label=label, block_id=anchor, file=file)
+                global_used_by.setdefault(ref_key, []).append(entry)
+
+    # Deduplicate and sort entries
+    for key in global_used_by:
+        seen: set[tuple[str, str | None]] = set()
+        deduped: list[UsedByEntry] = []
+        for entry in global_used_by[key]:
+            ident = (entry.file.src_path, entry.block_id)
+            if ident not in seen:
+                seen.add(ident)
+                deduped.append(entry)
+        deduped.sort(key=lambda e: (e.file.src_path, e.block_id or ""))
+        global_used_by[key] = deduped
+
+    return global_refs, global_ref_counts, global_used_by
 
 
 def _make_index_links(raw_name: str, count: int, base_url: str = "") -> str:

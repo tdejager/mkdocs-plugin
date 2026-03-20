@@ -1,8 +1,15 @@
+:root {
+  --entangled-scroll-offset: 80px;
+}
+
 .noweb-ref {
   color: var(--md-accent-fg-color, #7c4dff);
   text-decoration: none;
   font-style: italic;
-  border-bottom: 1px dashed currentColor;
+}
+
+.noweb-ref span {
+  color: inherit !important;
 }
 
 .noweb-ref:hover {
@@ -11,7 +18,6 @@
 }
 
 .noweb-index {
-  font-size: 0.75em;
   font-style: italic;
   margin-left: 0.25em;
 }
@@ -22,5 +28,23 @@
 }
 
 .noweb-index a:hover {
+  text-decoration: underline;
+}
+
+.used-by {
+  font-size: 0.8em;
+  color: var(--md-default-fg-color--light, #666);
+  font-style: italic;
+  margin-top: -0.5em;
+  margin-bottom: 1em;
+  padding-left: 0.5em;
+}
+
+.used-by a {
+  color: var(--md-accent-fg-color, #7c4dff);
+  text-decoration: none;
+}
+
+.used-by a:hover {
   text-decoration: underline;
 }

@@ -11,10 +11,11 @@ from entangled.config import read_config
 from entangled.interface import Context
 
 from .on_page_markdown import on_page_markdown
-from .on_page_content import on_page_content, build_global_refs
+from .on_page_content import on_page_content, build_global_refs_and_used_by
 from .config import EntangledConfig
 
 CSS_DIR = Path(__file__).parent / "css"
+JS_DIR = Path(__file__).parent / "js"
 
 
 class EntangledPlugin(BasePlugin[EntangledConfig]):
@@ -25,24 +26,34 @@ class EntangledPlugin(BasePlugin[EntangledConfig]):
         self._reference_map: ReferenceMap | None = None
         self._global_refs: dict[str, File] = {}
         self._global_ref_counts: dict[str, int] = {}
+        self._global_used_by: dict[str, list] = {}
 
     @override
     def on_files(self, files: Files, *, config: MkDocsConfig):
         ctx = Context()
         self._context = ctx | read_config(ctx.fs)
-        self._global_refs, self._global_ref_counts = build_global_refs(self._context, files, config)
+        self._global_refs, self._global_ref_counts, self._global_used_by = build_global_refs_and_used_by(self._context, files, config)
 
-        # Inject bundled CSS into the build
+        # Inject bundled CSS and JS into the build
         css_path = "css/entangled.css"
         css_file = File.generated(config, css_path, content=self._read_css())
         files.append(css_file)
         config["extra_css"].append(css_path)
+
+        js_path = "js/entangled.js"
+        js_file = File.generated(config, js_path, content=self._read_js())
+        files.append(js_file)
+        config["extra_javascript"].append(js_path)
 
         return files
 
     @staticmethod
     def _read_css() -> str:
         return (CSS_DIR / "entangled.css").read_text()
+
+    @staticmethod
+    def _read_js() -> str:
+        return (JS_DIR / "entangled.js").read_text()
 
     @override
     def on_page_markdown(self, markdown: str, *, page: Page, config: MkDocsConfig, files: Files):
@@ -51,6 +62,7 @@ class EntangledPlugin(BasePlugin[EntangledConfig]):
         result, self._reference_map = on_page_markdown(
             self._context, markdown, page=page, config=config, files=files,
             global_ref_counts=self._global_ref_counts,
+            global_used_by=self._global_used_by, global_refs=self._global_refs,
         )
         return result
 
