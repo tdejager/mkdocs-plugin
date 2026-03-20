@@ -53,51 +53,64 @@ def read_single_markdown(ctx: Context, text: str) -> tuple[ReferenceMap, list[Co
     return refs, content
 
 
-@codeblock_filter
-def add_title(reference_map: ReferenceMap, r: ReferenceId) -> list[Content]:
-    """
-    Changes the `open_line` member of a `CodeBlock` to reflect accepted
-    MkDocs syntax, adding a `title` attribute.
-    """
-    codeblock: CodeBlock = reference_map[r]
+def make_add_title(global_ref_counts: dict[str, int] | None = None) -> ContentFilter:
+    """Create the add_title filter, optionally with ref count info for indexed titles."""
+    ref_counts = global_ref_counts or {}
 
-    block_id = get_id(codeblock.properties)
-    classes = list(get_classes(codeblock.properties))
-    filename = get_attribute(codeblock.properties, "file")
+    @codeblock_filter
+    def add_title(reference_map: ReferenceMap, r: ReferenceId) -> list[Content]:
+        """
+        Changes the `open_line` member of a `CodeBlock` to reflect accepted
+        MkDocs syntax, adding a `title` attribute.
+        """
+        codeblock: CodeBlock = reference_map[r]
 
-    title = None
-    if block_id and filename:
-        title = f"#{block_id} / file: {filename}"
-    elif block_id:
-        title = f"#{block_id}"
-    elif filename:
-        title = f"file: {filename}"
+        block_id = get_id(codeblock.properties)
+        classes = list(get_classes(codeblock.properties))
+        filename = get_attribute(codeblock.properties, "file")
 
-    open_line = "```"
-    if classes:
-        open_line += classes[0]
+        title = None
+        if block_id and filename:
+            title = f"#{block_id} / file: {filename}"
+        elif block_id:
+            title = f"#{block_id}"
+        elif filename:
+            title = f"file: {filename}"
 
-    if block_id or classes or title:
-        open_line += " {"
+        # Add [N] index to title when block has multiple parts
+        if title and block_id:
+            count = ref_counts.get(block_id, 1)
+            if count > 1:
+                title += f" [{r.ref_count + 1}]"
 
+        open_line = "```"
+        if classes:
+            open_line += classes[0]
+
+        if block_id or classes or title:
+            open_line += " {"
+
+            if block_id:
+                open_line += str(Id(block_id))
+
+            for c in classes[1:]:
+                open_line += " " + str(Class(c))
+
+            if title:
+                open_line += " " + str(Attribute("title", title))
+
+            open_line += "}\n"
+
+        codeblock.open_line = open_line
+
+        # Insert an anchor target before code blocks with an id, so that
+        # <<refname>> links can jump to them.
         if block_id:
-            open_line += str(Id(block_id))
+            anchor_id = block_id if r.ref_count == 0 else f"{block_id}-{r.ref_count}"
+            return [PlainText(f'\n<a id="{anchor_id}"></a>\n'), r]
+        return [r]
 
-        for c in classes[1:]:
-            open_line += " " + str(Class(c))
-
-        if title:
-            open_line += " " + str(Attribute("title", title))
-
-        open_line += "}\n"
-
-    codeblock.open_line = open_line
-
-    # Insert an anchor target before code blocks with an id, so that
-    # <<refname>> links can jump to them.
-    if block_id:
-        return [PlainText(f'\n<a id="{block_id}"></a>\n'), r]
-    return [r]
+    return add_title
 
 
 @codeblock_filter
@@ -133,7 +146,11 @@ def include_repl_output(reference_map: ReferenceMap, r: ReferenceId) -> list[Con
     return [r, PlainText(output)]
 
 
-def on_page_markdown(context: Context, markdown: str, *, page: Page, config: MkDocsConfig, files: Files) -> tuple[str, ReferenceMap]:
+def on_page_markdown(
+    context: Context, markdown: str, *, page: Page, config: MkDocsConfig, files: Files,
+    global_ref_counts: dict[str, int] | None = None,
+) -> tuple[str, ReferenceMap]:
     reference_map, content = read_single_markdown(context, markdown)
+    add_title = make_add_title(global_ref_counts)
     filtered_content = iter_bind(content, partial(compose_filters(add_title, include_repl_output), reference_map))
     return document_to_text(reference_map, filtered_content), reference_map

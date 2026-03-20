@@ -9,3 +9,18 @@
   text-decoration: underline;
   filter: brightness(1.2);
 }
+
+.noweb-index {
+  font-size: 0.75em;
+  font-style: italic;
+  margin-left: 0.25em;
+}
+
+.noweb-index a {
+  color: var(--md-accent-fg-color, #7c4dff);
+  text-decoration: none;
+}
+
+.noweb-index a:hover {
+  text-decoration: underline;
+}

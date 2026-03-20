@@ -24,12 +24,13 @@ class EntangledPlugin(BasePlugin[EntangledConfig]):
         self._context: Context | None = None
         self._reference_map: ReferenceMap | None = None
         self._global_refs: dict[str, File] = {}
+        self._global_ref_counts: dict[str, int] = {}
 
     @override
     def on_files(self, files: Files, *, config: MkDocsConfig):
         ctx = Context()
         self._context = ctx | read_config(ctx.fs)
-        self._global_refs = build_global_refs(self._context, files, config)
+        self._global_refs, self._global_ref_counts = build_global_refs(self._context, files, config)
 
         # Inject bundled CSS into the build
         css_path = "css/entangled.css"
@@ -47,11 +48,14 @@ class EntangledPlugin(BasePlugin[EntangledConfig]):
     def on_page_markdown(self, markdown: str, *, page: Page, config: MkDocsConfig, files: Files):
         assert self._context is not None
         self._reference_map = None
-        result, self._reference_map = on_page_markdown(self._context, markdown, page=page, config=config, files=files)
+        result, self._reference_map = on_page_markdown(
+            self._context, markdown, page=page, config=config, files=files,
+            global_ref_counts=self._global_ref_counts,
+        )
         return result
 
     @override
     def on_page_content(self, html: str, *, page: Page, config: MkDocsConfig, files: Files):
         if self._reference_map is not None:
-            return on_page_content(html, self._reference_map, self._global_refs, page=page)
+            return on_page_content(html, self._reference_map, self._global_refs, self._global_ref_counts, page=page)
         return html
